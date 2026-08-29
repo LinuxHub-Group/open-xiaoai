@@ -48,8 +48,9 @@
 
 ```shell
 # 你的小米账号/密码
-MI_USER=23333333
-MI_PASS=xxxxxxxxx
+MI_USER=23333333 #小米账号必须使用UID，去手机账号页面可以看到数字ID
+MI_PASS=xxxxxxxxx #密码必填
+MI_TOKEN=你的 passToken # 获取教程 👉 https://github.com/idootop/migpt-next/issues/4
 
 # 你的小爱音箱名称/DID
 MI_DID=小爱音箱Pro
