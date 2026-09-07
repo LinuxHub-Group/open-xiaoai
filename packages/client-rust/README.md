@@ -38,6 +38,16 @@ curl -L -o /data/init.sh https://gitee.com/idootop/artifacts/releases/download/o
 reboot
 ```
 
+## 连接恢复
+
+Client 会保持到 Server 的反向 WebSocket 连接：
+
+- 每 15 秒发送一次 WebSocket `Ping`；45 秒内未收到对应 `Pong`，主动断开失效连接。
+- Server 重启、网络中断、对端关闭或心跳超时后，Client 会停止连接相关的监控任务并自动重连。
+- 重连间隔按 `1`、`2`、`4`、`8`、`16`、`30` 秒递增；连接成功后恢复为 1 秒。
+
+因此 Server 恢复或网络可达后无需手动重启 Client。
+
 ## 编译运行
 
 > [!TIP]

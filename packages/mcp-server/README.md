@@ -13,7 +13,8 @@ Agent ── MCP (HTTP / stdio) ── mcp-server ── WebSocket（音箱主�
 - `xiaoai_play_url`：播放 HTTP(S) 音频链接。
 - `xiaoai_interrupt`：打断 TTS 和媒体播放。
 - `xiaoai_wake` / `xiaoai_sleep`：控制小爱监听。
-- `xiaoai_ask`：将自然语言指令交给原生小爱处理。
+- `xiaoai_ask`：将自然语言指令交给原生小爱处理，不等待回复。
+- `xiaoai_ask_and_wait`：发送问题并等待原生 `SpeechSynthesizer.Speak` 事件，返回小爱的文字回复。
 - `xiaoai_status`：查询播放状态。
 - `xiaoai_device_info`：查询设备型号和序列号。
 - `xiaoai_mic`：查询或控制麦克风。
@@ -41,15 +42,16 @@ npm run build
 npm start
 ```
 
-要供局域网中其他 Agent 使用，必须显式绑定并设置 HTTP Bearer token：
+推荐从带注释的示例创建本地配置：
 
 ```bash
-DEVICE_WS_HOST=0.0.0.0 \
-DEVICE_TOKEN='device-secret' \
-MCP_HOST=0.0.0.0 \
-MCP_AUTH_TOKEN='mcp-secret' \
+cp .env.example .env
+chmod 600 .env
+# 编辑 .env，设置 DEVICE_TOKEN 和 MCP_AUTH_TOKEN
 npm start
 ```
+
+`.env` 在启动时自动读取；实际进程环境变量优先于 `.env`。局域网部署必须设置 `DEVICE_WS_HOST=0.0.0.0`、`MCP_HOST=0.0.0.0` 和 `MCP_AUTH_TOKEN`。
 
 - MCP 地址：`http://<server-ip>:8080/mcp`
 - Agent 请求头：`Authorization: Bearer mcp-secret`

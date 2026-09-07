@@ -142,7 +142,8 @@ packages/mcp-server/
 | `xiaoai_interrupt` | `{}` | `killall tts_play.sh miplayer 2>/dev/null; mphelper pause` | 打断当前播报/播放 |
 | `xiaoai_wake` | `{silent?: bool=true}` | `pnshelper event_notify '{"src":1,"event":0}'`（silent）/ `'{"src":0,...}'` | 唤醒小爱 |
 | `xiaoai_sleep` | `{}` | `pnshelper event_notify '{"src":3,"event":7}'; sleep 0.1; ...'{"src":3,"event":8}'` | 退出监听 |
-| `xiaoai_ask` | `{text: string, silent?: bool=false}` | `ubus call mibrain ai_service '{"nlp":1,"nlp_text":"<t>","tts":1}'` | 把指令交给原生小爱执行 |
+| `xiaoai_ask` | `{text: string, silent?: bool=false}` | `ubus call mibrain ai_service '{"nlp":1,"nlp_text":"<t>","tts":1}'` | 把指令交给原生小爱执行，不等待回复 |
+| `xiaoai_ask_and_wait` | `{text: string, timeout_seconds?: 20}` | 同 `xiaoai_ask`，并等待 `SpeechSynthesizer.Speak` 事件 | 返回小爱的实际播报文本；每设备串行 |
 | `xiaoai_status` | `{}` | `mphelper mute_stat` → 映射 playing/paused/idle | 播放状态 |
 | `xiaoai_device_info` | `{}` | `echo $(micocfg_model) $(micocfg_sn)` | 型号/SN |
 | `xiaoai_mic` | `{action: "on"\|"off"\|"status"}` | on/off:`pnshelper event_notify`；status:检测 `/tmp/mipns/mute` | 麦克风 |

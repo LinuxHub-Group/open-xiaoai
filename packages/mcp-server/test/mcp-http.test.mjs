@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { once } from "node:events";
@@ -57,6 +58,32 @@ test("serves MCP tools through HTTP and proxies a tool call to the device", { ti
             Response: { id: message.Request.id, data: { stdout: "", stderr: "", exit_code: 0 } },
           }),
         );
+        if (message.Request.payload.includes("mibrain ai_service")) {
+          setTimeout(() => {
+            device.send(
+              JSON.stringify({
+                Event: {
+                  id: randomUUID(),
+                  event: "instruction",
+                  data: {
+                    NewLine: JSON.stringify({
+                      header: {
+                        dialog_id: "f347e57736eb5eba8cae034fb664b701",
+                        id: "3d38198d78dd4623b93f93a3a38a7594",
+                        name: "Speak",
+                        namespace: "SpeechSynthesizer",
+                      },
+                      payload: {
+                        codec: "MP3",
+                        text: "你好呀！很高兴见到你，重启之后我又回来啦，祝你今天开开心心！",
+                      },
+                    }),
+                  },
+                },
+              }),
+            );
+          }, 0);
+        }
         return;
       }
       device.send(JSON.stringify({ Response: { id: message.Request.id, code: -1, msg: "unexpected command" } }));
@@ -85,9 +112,22 @@ test("serves MCP tools through HTTP and proxies a tool call to the device", { ti
       arguments: { device: "living-room", text: "hello'; /bin/false #", blocking: false },
     });
     assert.equal(speak.isError, undefined);
-    assert.deepEqual(shellScripts, [
-      `ubus call mibrain text_to_speech '{"text":"hello'"'"'; /bin/false #","save":0}'`,
-    ]);
+    assert.equal(shellScripts[0], `ubus call mibrain text_to_speech '{"text":"hello'"'"'; /bin/false #","save":0}'`);
+    const nativeReply = await client.callTool({
+      name: "xiaoai_ask_and_wait",
+      arguments: { device: "living-room", text: "你好", timeout_seconds: 5 },
+    });
+    assert.deepEqual(nativeReply.structuredContent, {
+      success: true,
+      action: "ask_and_wait",
+      accepted: true,
+      dialogId: "f347e57736eb5eba8cae034fb664b701",
+      reply: "你好呀！很高兴见到你，重启之后我又回来啦，祝你今天开开心心！",
+      source: "SpeechSynthesizer.Speak",
+      stdout: "",
+      stderr: "",
+      exit_code: 0,
+    });
   } finally {
     await client?.close();
     device?.close();

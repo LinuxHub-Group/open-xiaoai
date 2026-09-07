@@ -22,6 +22,9 @@ struct AppClient {
     playing_monitor: PlayingMonitor,
 }
 
+const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
+
 impl AppClient {
     pub fn new() -> Self {
         Self {
@@ -38,19 +41,26 @@ impl AppClient {
 
     pub async fn run(&mut self) {
         let url = std::env::args().nth(1).expect("❌ 请输入服务器地址");
+        let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
         println!("✅ 已启动");
+
         loop {
-            let Ok(ws_stream) = self.connect(&url).await else {
-                sleep(Duration::from_secs(1)).await;
-                continue;
-            };
-            println!("✅ 已连接: {:?}", url);
-            self.init(ws_stream).await;
-            if let Err(e) = MessageManager::instance().process_messages().await {
-                eprintln!("❌ 消息处理异常: {}", e);
+            match self.connect(&url).await {
+                Ok(ws_stream) => {
+                    reconnect_delay = INITIAL_RECONNECT_DELAY;
+                    println!("✅ 已连接: {:?}", url);
+                    self.init(ws_stream).await;
+                    if let Err(error) = MessageManager::instance().process_messages().await {
+                        eprintln!("❌ 连接已断开: {}", error);
+                    }
+                    self.dispose().await;
+                }
+                Err(error) => eprintln!("❌ 连接失败: {}", error),
             }
-            self.dispose().await;
-            eprintln!("❌ 已断开连接");
+
+            eprintln!("⌛ {} 秒后重连", reconnect_delay.as_secs());
+            sleep(reconnect_delay).await;
+            reconnect_delay = reconnect_delay.saturating_mul(2).min(MAX_RECONNECT_DELAY);
         }
     }
 

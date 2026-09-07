@@ -39,6 +39,13 @@ export interface DeviceGatewayOptions {
   token?: string;
 }
 
+export interface DeviceEventWaiter {
+  cancel: (reason?: Error) => void;
+  result: Promise<DeviceEvent>;
+}
+
+export type DeviceEventPredicate = (event: DeviceEvent) => boolean;
+
 interface PendingRequest {
   reject: (reason: Error) => void;
   resolve: (response: DeviceResponse) => void;
@@ -149,6 +156,7 @@ class DeviceSession extends EventEmitter {
 export class DeviceGateway extends EventEmitter {
   private readonly sessions = new Map<string, DeviceSession>();
   private server?: WebSocketServer;
+  private readonly eventWaiters = new Map<string, DeviceEventWaiter>();
   private nextDeviceNumber = 1;
 
   public async start(options: DeviceGatewayOptions): Promise<void> {
@@ -209,6 +217,67 @@ export class DeviceGateway extends EventEmitter {
   public async call(deviceId: string | undefined, command: string, payload?: unknown): Promise<DeviceResponse> {
     const session = this.selectSession(deviceId);
     return session.call(command, payload);
+  }
+
+  public waitForEvent(
+    deviceId: string | undefined,
+    predicate: DeviceEventPredicate,
+    timeoutMs: number,
+  ): DeviceEventWaiter {
+    const session = this.selectSession(deviceId);
+    const selectedDeviceId = session.info.id;
+    if (this.eventWaiters.has(selectedDeviceId)) {
+      throw new Error(`设备 ${selectedDeviceId} 已有等待中的原生回复请求`);
+    }
+
+    let cancel: (reason?: Error) => void = () => {};
+    const result = new Promise<DeviceEvent>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off("deviceEvent", onEvent);
+        this.off("deviceDisconnected", onDisconnect);
+        this.eventWaiters.delete(selectedDeviceId);
+      };
+      const fail = (reason: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(reason);
+      };
+      const onEvent = (emittedDeviceId: string, event: DeviceEvent) => {
+        if (emittedDeviceId !== selectedDeviceId) {
+          return;
+        }
+        try {
+          if (!predicate(event) || settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          resolve(event);
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+      const onDisconnect = (disconnectedDeviceId: string) => {
+        if (disconnectedDeviceId === selectedDeviceId) {
+          fail(new DeviceUnavailableError(`设备 ${selectedDeviceId} 在等待回复时断开`));
+        }
+      };
+      const timer = setTimeout(() => {
+        fail(new DeviceUnavailableError(`等待设备 ${selectedDeviceId} 的原生回复超时`));
+      }, timeoutMs);
+
+      cancel = (reason = new DeviceUnavailableError(`取消等待设备 ${selectedDeviceId} 的原生回复`)) => fail(reason);
+      this.on("deviceEvent", onEvent);
+      this.on("deviceDisconnected", onDisconnect);
+    });
+    const waiter = { cancel, result };
+    this.eventWaiters.set(selectedDeviceId, waiter);
+    return waiter;
   }
 
   private addConnection(socket: WebSocket, request: IncomingMessage): void {

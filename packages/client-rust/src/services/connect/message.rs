@@ -3,8 +3,10 @@ use futures::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::future::Future;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, Semaphore};
+use tokio::time::{interval_at, Instant, MissedTickBehavior};
 use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 
@@ -37,6 +39,9 @@ pub struct MessageManager {
 }
 
 static INSTANCE: LazyLock<MessageManager> = LazyLock::new(MessageManager::new);
+
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(45);
 
 impl MessageManager {
     fn new() -> Self {
@@ -121,34 +126,47 @@ impl MessageManager {
             return Err("WebSocket reader is not initialized".into());
         }
 
+        let mut heartbeat = interval_at(Instant::now() + HEARTBEAT_INTERVAL, HEARTBEAT_INTERVAL);
+        heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut ping_sent_at: Option<Instant> = None;
+
         loop {
-            let next_msg = {
-                let mut reader = self.reader.lock().await;
-                match reader.as_mut() {
-                    None => break,
-                    Some(WsReader::Client(reader)) => reader.next().await,
-                    Some(WsReader::Server(reader)) => reader.next().await,
-                }
-            };
-            match next_msg {
-                None => break,
-                Some(Ok(Message::Close(_))) => break,
-                Some(Err(e)) => return Err(e.into()),
-                Some(Ok(msg)) => {
-                    match msg {
-                        Message::Text(text) => {
+            tokio::select! {
+                next_msg = async {
+                    let mut reader = self.reader.lock().await;
+                    match reader.as_mut() {
+                        None => None,
+                        Some(WsReader::Client(reader)) => reader.next().await,
+                        Some(WsReader::Server(reader)) => reader.next().await,
+                    }
+                } => {
+                    match next_msg {
+                        None => return Err("WebSocket connection closed".into()),
+                        Some(Ok(Message::Close(_))) => return Err("WebSocket connection closed by peer".into()),
+                        Some(Err(error)) => return Err(error.into()),
+                        Some(Ok(Message::Pong(_))) => ping_sent_at = None,
+                        Some(Ok(Message::Text(text))) => {
                             let _ = self.on_text(text.to_string()).await;
                         }
-                        Message::Binary(bytes) => {
+                        Some(Ok(Message::Binary(bytes))) => {
                             let _ = self.on_bytes(bytes.into()).await;
                         }
-                        _ => {}
-                    };
+                        Some(Ok(_)) => {}
+                    }
+                }
+                _ = heartbeat.tick() => {
+                    if let Some(sent_at) = ping_sent_at {
+                        if sent_at.elapsed() >= HEARTBEAT_TIMEOUT {
+                            return Err("WebSocket heartbeat timed out".into());
+                        }
+                        continue;
+                    }
+
+                    self.send(Message::Ping(Vec::new().into())).await?;
+                    ping_sent_at = Some(Instant::now());
                 }
             }
         }
-
-        Ok(())
     }
 
     async fn on_bytes(&self, bytes: Vec<u8>) -> Result<(), AppError> {

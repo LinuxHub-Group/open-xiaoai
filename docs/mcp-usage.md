@@ -42,17 +42,31 @@ npm install
 npm run build
 ```
 
-面向局域网 Agent 启动服务：
+从带注释的模板创建配置文件：
 
 ```bash
-DEVICE_WS_HOST=0.0.0.0 \
-DEVICE_WS_PORT=4399 \
-DEVICE_TOKEN='device-secret' \
-MCP_HOST=0.0.0.0 \
-MCP_PORT=8080 \
-MCP_AUTH_TOKEN='mcp-secret' \
+cp .env.example .env
+chmod 600 .env
+```
+
+编辑 `.env`，为局域网部署设置：
+
+```dotenv
+DEVICE_WS_HOST=0.0.0.0
+DEVICE_WS_PORT=4399
+DEVICE_TOKEN=device-secret
+MCP_HOST=0.0.0.0
+MCP_PORT=8080
+MCP_AUTH_TOKEN=mcp-secret
+```
+
+然后启动：
+
+```bash
 npm start
 ```
+
+`.env` 会在启动时自动读取；实际进程环境变量优先于 `.env`。
 
 成功启动后日志应包含：
 
@@ -212,7 +226,7 @@ curl \
 }
 ```
 
-交给原生小爱处理：
+`xiaoai_ask` 仅提交指令，不返回小爱的异步回复：
 
 ```json
 {
@@ -220,6 +234,31 @@ curl \
   "text": "今天天气怎么样"
 }
 ```
+
+需要获取回复文字时，调用 `xiaoai_ask_and_wait`：
+
+```json
+{
+  "device": "living-room",
+  "text": "今天天气怎么样",
+  "timeout_seconds": 20
+}
+```
+
+它返回小爱原生 `SpeechSynthesizer.Speak` 指令中的 `payload.text`，例如：
+
+```json
+{
+  "success": true,
+  "reply": "今天晴，最高温度二十六度。",
+  "dialogId": "f347e57736eb5eba8cae034fb664b701",
+  "source": "SpeechSynthesizer.Speak"
+}
+```
+
+设备端将 `/tmp/mico_aivs_lab/instruction.log` 的每条 JSON 记录作为一个 `instruction` 事件转发。服务端直接验证 `header.namespace`、`header.name` 和 `payload.text`，仅接受完整的 `SpeechSynthesizer.Speak` 指令。
+
+当前原生 `ai_service` 的同步返回不带 `dialog_id`，因此关联规则是“该设备成功接受提问之后的第一条 `SpeechSynthesizer.Speak`”。同一台设备一次只能运行一个 `xiaoai_ask_and_wait`；等待期间不要向该音箱发送另一条原生小爱指令，否则无法可靠区分两轮播报。
 
 ## 五、可用 MCP 工具
 
@@ -231,7 +270,8 @@ curl \
 | `xiaoai_interrupt` | 停止当前 TTS 和媒体播放 |
 | `xiaoai_wake` | 唤醒小爱；默认静默唤醒 |
 | `xiaoai_sleep` | 停止当前监听 |
-| `xiaoai_ask` | 将自然语言指令交给原生小爱 |
+| `xiaoai_ask` | 将自然语言指令交给原生小爱，不等待异步回复 |
+| `xiaoai_ask_and_wait` | 将问题交给原生小爱，并返回实际播报的文字回复 |
 | `xiaoai_status` | 查询播放状态 |
 | `xiaoai_device_info` | 查询设备型号和序列号 |
 | `xiaoai_mic` | 打开、关闭或查询麦克风 |

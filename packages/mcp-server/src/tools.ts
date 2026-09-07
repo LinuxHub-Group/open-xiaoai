@@ -8,12 +8,48 @@ import {
 } from "./device.js";
 import {
   type CommandResult,
+  type DeviceEvent,
   parseCommandResult,
 } from "./protocol.js";
 
 const DeviceSelectorSchema = z.object({
   device: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/).optional(),
 });
+
+const InstructionEventSchema = z.object({
+  NewLine: z.string().min(1),
+});
+
+const SpeakInstructionSchema = z.object({
+  header: z.object({
+    dialog_id: z.string().min(1),
+    name: z.literal("Speak"),
+    namespace: z.literal("SpeechSynthesizer"),
+  }),
+  payload: z.object({
+    text: z.string().trim().min(1),
+  }),
+});
+
+type NativeReply = z.infer<typeof SpeakInstructionSchema>;
+
+function extractNativeReply(event: DeviceEvent): NativeReply | undefined {
+  if (event.event !== "instruction") {
+    return undefined;
+  }
+
+  const fileEvent = InstructionEventSchema.safeParse(event.data);
+  if (!fileEvent.success) {
+    return undefined;
+  }
+
+  try {
+    const reply = SpeakInstructionSchema.safeParse(JSON.parse(fileEvent.data.NewLine));
+    return reply.success ? reply.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 class ShellCommandError extends Error {
   public constructor(public readonly result: CommandResult) {
@@ -142,6 +178,48 @@ class XiaoaiToolService {
         this.runTool(async () => {
           const result = await this.runShell(device, this.askXiaoaiCommand(text, silent));
           return { action: "ask", silent, ...result };
+        }),
+    );
+
+    server.registerTool(
+      "xiaoai_ask_and_wait",
+      {
+        title: "向原生小爱提问并等待文字回复",
+        description: "向原生小爱发送问题，等待 SpeechSynthesizer.Speak 指令并返回小爱的播报文本。每台设备同一时间只允许一个等待中的请求。",
+        inputSchema: DeviceSelectorSchema.extend({
+          text: z.string().trim().min(1).max(500),
+          timeout_seconds: z.number().int().min(1).max(60).optional().default(20),
+        }),
+      },
+      async ({ device, text, timeout_seconds: timeoutSeconds }) =>
+        this.runTool(async () => {
+          let reply: NativeReply | undefined;
+          const waiter = this.devices.waitForEvent(
+            device,
+            (event) => {
+              reply = extractNativeReply(event);
+              return reply !== undefined;
+            },
+            timeoutSeconds * 1_000,
+          );
+          try {
+            const accepted = await this.runShell(device, this.askXiaoaiCommand(text, false));
+            await waiter.result;
+            if (!reply) {
+              throw new Error("原生回复事件无法解析");
+            }
+            return {
+              action: "ask_and_wait",
+              accepted: true,
+              dialogId: reply.header.dialog_id,
+              reply: reply.payload.text,
+              source: "SpeechSynthesizer.Speak",
+              ...accepted,
+            };
+          } catch (error) {
+            waiter.cancel(error instanceof Error ? error : new Error(String(error)));
+            throw error;
+          }
         }),
     );
 
